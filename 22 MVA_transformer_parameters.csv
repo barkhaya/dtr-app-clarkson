@@ -1,0 +1,2 @@
+MVA_rated,MVA_loss,T_loss,P_wr,P_er,P_sr,P_cr,P_coe,E_hs,M_cc,M_tank,liquid_volume,T_ambr,T_wg,T_wr,T_hsr,T_tor,T_bor,T_k,H_hs,tau_w,cooling_system,winding_material,liquid_type,WCP,T_bit,gas_head_p,TUK
+22,12.06,75,58400,15000,14600,14500,14500,1.3,30450,15600,16000,30,65,63,80,55,25,234.5,1,6,ONAN/ONAF,Copper,Mineral Oil,2,0,760,TRUE
