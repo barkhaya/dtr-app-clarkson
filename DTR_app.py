@@ -12,7 +12,7 @@ from scipy.stats import gaussian_kde
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
-from geopy.geocoders import Nominatim
+# from geopy.geocoders import Nominatim
 import datetime
 import plotly.express as px
 import folium
@@ -146,53 +146,110 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================================
-# GEOCODING FUNCTIONS
+# GEOAPIFY GEOCODING FUNCTIONS
+# Cloud-safe replacement for public Nominatim
 # ============================================================
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=86400, show_spinner=False)
 def geocode_city(city):
     """
-    Convert a city name into latitude, longitude, and address.
-    Cached for 24 hours to reduce requests to Nominatim.
+    Convert a city/address into coordinates using Geoapify.
+    Results are cached for 24 hours.
     """
-    geolocator = Nominatim(
-        user_agent="Clarkson_Dynamic_Asset_Rating_Dashboard/1.0"
+
+    api_key = st.secrets["GEOAPIFY_API_KEY"]
+
+    url = "https://api.geoapify.com/v1/geocode/search"
+
+    params = {
+        "text": city,
+        "format": "json",
+        "limit": 1,
+        "filter": "countrycode:us",
+        "apiKey": api_key
+    }
+
+    response = requests.get(
+        url,
+        params=params,
+        timeout=15
     )
 
-    location = geolocator.geocode(
-        city,
-        timeout=10
-    )
+    response.raise_for_status()
 
-    if location:
-        return {
-            "lat": location.latitude,
-            "lon": location.longitude,
-            "address": location.address
-        }
+    data = response.json()
 
-    return None
+    results = data.get("results", [])
+
+    if not results:
+        return None
+
+    result = results[0]
+
+    return {
+        "lat": result.get("lat"),
+        "lon": result.get("lon"),
+        "address": result.get(
+            "formatted",
+            city
+        ),
+        "state": result.get("state"),
+        "state_code": result.get("state_code"),
+        "city": result.get(
+            "city",
+            result.get("county", city)
+        )
+    }
 
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=86400, show_spinner=False)
 def reverse_geocode(lat, lon):
     """
-    Convert latitude and longitude into an address.
-    Cached for 24 hours to reduce requests to Nominatim.
+    Convert coordinates into address/state using Geoapify.
+    Results are cached for 24 hours.
     """
-    geolocator = Nominatim(
-        user_agent="Clarkson_Dynamic_Asset_Rating_Dashboard/1.0"
+
+    api_key = st.secrets["GEOAPIFY_API_KEY"]
+
+    url = "https://api.geoapify.com/v1/geocode/reverse"
+
+    params = {
+        "lat": lat,
+        "lon": lon,
+        "format": "json",
+        "limit": 1,
+        "apiKey": api_key
+    }
+
+    response = requests.get(
+        url,
+        params=params,
+        timeout=15
     )
 
-    location = geolocator.reverse(
-        (lat, lon),
-        timeout=10
-    )
+    response.raise_for_status()
 
-    if location:
-        return location.address
+    data = response.json()
 
-    return None
+    results = data.get("results", [])
+
+    if not results:
+        return None
+
+    result = results[0]
+
+    return {
+        "address": result.get(
+            "formatted",
+            f"{lat}, {lon}"
+        ),
+        "state": result.get("state"),
+        "state_code": result.get("state_code"),
+        "city": result.get(
+            "city",
+            result.get("county")
+        )
+    }
 
 # ─────────────────────────────────────────────────────────────
 # SIDEBAR – INPUTS
@@ -232,6 +289,8 @@ with st.sidebar:
         st.session_state.city = ""
     if "address" not in st.session_state:
         st.session_state.address = "Buffalo, NY (Default)"
+    if "state" not in st.session_state:
+        st.session_state.state = "New York"
 
     # ── City Input ──
     city_input = st.text_input(
@@ -264,11 +323,21 @@ with st.sidebar:
                             geo["lon"], 4
                         )
 
-                        st.session_state.city = city_input.strip()
+                        st.session_state.city = (
+                                geo.get("city")
+                                or city_input.strip()
+                        )
 
                         st.session_state.address = geo["address"]
 
-                        st.success("Location updated")
+                        if geo.get("state"):
+                            st.session_state.state = geo["state"]
+
+                        st.success(
+                            f"Location updated: "
+                            f"{st.session_state.city}, "
+                            f"{st.session_state.state}"
+                        )
 
                         st.rerun()
 
@@ -291,6 +360,7 @@ with st.sidebar:
             st.session_state.lon = DEFAULT_LON
             st.session_state.city = ""
             st.session_state.address = "Buffalo, NY (Default)"
+            st.session_state.state = "New York"
             st.rerun()
 
     # ── Interactive Map ──
@@ -320,41 +390,66 @@ with st.sidebar:
         width=None,
     )
     # ── Detect map click ──
-    # ── Detect map click ──
-    # ── Detect map click ──
     if map_data and map_data.get("last_clicked"):
 
         clicked_lat = map_data["last_clicked"]["lat"]
         clicked_lon = map_data["last_clicked"]["lng"]
 
-        st.session_state.lat = round(clicked_lat, 4)
-        st.session_state.lon = round(clicked_lon, 4)
+        st.session_state.lat = round(
+            clicked_lat,
+            4
+        )
+
+        st.session_state.lon = round(
+            clicked_lon,
+            4
+        )
 
         try:
 
-            address = reverse_geocode(
-                round(clicked_lat, 4),
-                round(clicked_lon, 4)
+            location_info = reverse_geocode(
+                st.session_state.lat,
+                st.session_state.lon
             )
 
-            if address:
+            if location_info:
 
-                st.session_state.address = address
+                st.session_state.address = (
+                    location_info["address"]
+                )
+
+                if location_info.get("state"):
+                    st.session_state.state = (
+                        location_info["state"]
+                    )
+
+                if location_info.get("city"):
+                    st.session_state.city = (
+                        location_info["city"]
+                    )
 
             else:
 
                 st.session_state.address = (
-                    "Location identified by coordinates"
+                    f"Coordinates: "
+                    f"{st.session_state.lat}, "
+                    f"{st.session_state.lon}"
                 )
 
-        except Exception:
+        except Exception as e:
 
             st.session_state.address = (
-                "Location identified by coordinates"
+                f"Coordinates: "
+                f"{st.session_state.lat}, "
+                f"{st.session_state.lon}"
             )
 
-        st.success("📍 Location selected from map")
+        st.success(
+            "📍 Location selected from map"
+        )
+
         st.rerun()
+
 
     st.markdown("### ✏️ Manual Coordinate Override")
 
@@ -376,9 +471,57 @@ with st.sidebar:
             format="%.4f",
             key="lon"
         )
+    if st.button(
+            "📍 Apply Coordinates",
+            use_container_width=True
+    ):
+
+        try:
+
+            location_info = reverse_geocode(
+                round(st.session_state.lat, 4),
+                round(st.session_state.lon, 4)
+            )
+
+            if location_info:
+
+                st.session_state.address = (
+                    location_info["address"]
+                )
+
+                if location_info.get("state"):
+                    st.session_state.state = (
+                        location_info["state"]
+                    )
+
+                if location_info.get("city"):
+                    st.session_state.city = (
+                        location_info["city"]
+                    )
+
+                st.success(
+                    "Coordinates updated."
+                )
+
+                st.rerun()
+
+            else:
+
+                st.warning(
+                    "No U.S. location was found "
+                    "for these coordinates."
+                )
+
+        except Exception as e:
+
+            st.error(
+                f"Coordinate lookup failed: {e}"
+            )
+
 
     st.success(f"📌 Current Location: {st.session_state.address}")
     st.caption(f"Coordinates: {st.session_state.lat}, {st.session_state.lon}")
+    st.caption(f"Detected State: {st.session_state.state}")
 
     # Final variables used by NASA fetch
     lat = st.session_state.lat
@@ -949,10 +1092,22 @@ def air_thermal_conductivity_W_mK(Tfilm_c):
     """
     return 0.02424 + 7.477e-5 * Tfilm_c - 4.407e-9 * (Tfilm_c ** 2)
 
-@st.cache_data
+@st.cache_data(ttl=86400)
 def load_us_states_geojson():
-    url = "https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geojson/us-states.json"
-    response = requests.get(url)
+
+    url = (
+        "https://raw.githubusercontent.com/"
+        "PublicaMundi/MappingAPI/master/data/"
+        "geojson/us-states.json"
+    )
+
+    response = requests.get(
+        url,
+        timeout=20
+    )
+
+    response.raise_for_status()
+
     return response.json()
 
 def extract_state(address):
@@ -2006,19 +2161,24 @@ if run_btn or run_future_dashboard:
         # 1. IDENTIFY SELECTED STATE
         # ========================================================
 
-        state_full = extract_state(
-            st.session_state.address
+        state_full = st.session_state.get(
+            "state"
         )
 
-        if state_full is None:
+        if not state_full:
+            # Backup method only
+            state_full = extract_state(
+                st.session_state.address
+            )
 
+        if not state_full:
             st.error(
                 "The selected U.S. state could not be identified. "
-                "Please search for a U.S. city or select a U.S. location."
+                "Please search for a U.S. city, click a U.S. "
+                "location on the map, or enter coordinates."
             )
 
             st.stop()
-
 
         # ========================================================
         # 2. SCENARIO CODE
@@ -5103,7 +5263,9 @@ if run_btn or run_future_dashboard:
 
     st.markdown("## 🗺️ Selected Location on US Map")
 
-    state_full = extract_state(st.session_state.address)
+    state_full = st.session_state.get(
+        "state"
+    )
 
     if state_full:
         fig_map = plot_us_highlight_map(state_full)
