@@ -4,6 +4,5 @@ pandas
 scipy
 plotly
 requests
-geopy
 folium
 streamlit-folium
