@@ -145,10 +145,60 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ============================================================
+# GEOCODING FUNCTIONS
+# ============================================================
+
+@st.cache_data(ttl=86400)
+def geocode_city(city):
+    """
+    Convert a city name into latitude, longitude, and address.
+    Cached for 24 hours to reduce requests to Nominatim.
+    """
+    geolocator = Nominatim(
+        user_agent="Clarkson_Dynamic_Asset_Rating_Dashboard/1.0"
+    )
+
+    location = geolocator.geocode(
+        city,
+        timeout=10
+    )
+
+    if location:
+        return {
+            "lat": location.latitude,
+            "lon": location.longitude,
+            "address": location.address
+        }
+
+    return None
+
+
+@st.cache_data(ttl=86400)
+def reverse_geocode(lat, lon):
+    """
+    Convert latitude and longitude into an address.
+    Cached for 24 hours to reduce requests to Nominatim.
+    """
+    geolocator = Nominatim(
+        user_agent="Clarkson_Dynamic_Asset_Rating_Dashboard/1.0"
+    )
+
+    location = geolocator.reverse(
+        (lat, lon),
+        timeout=10
+    )
+
+    if location:
+        return location.address
+
+    return None
+
 # ─────────────────────────────────────────────────────────────
 # SIDEBAR – INPUTS
 # ─────────────────────────────────────────────────────────────
 fixed_wind_speed = 0.6
+
 with st.sidebar:
     st.header("🔧 Configuration")
 
@@ -194,23 +244,44 @@ with st.sidebar:
 
     with colA:
         if st.button("🌍 Geocode City", use_container_width=True):
+
             if city_input.strip():
+
                 try:
                     with st.spinner("Geocoding city..."):
-                        geolocator = Nominatim(user_agent="dtr_dashboard_pro")
-                        geo = geolocator.geocode(city_input, timeout=10)
+
+                        geo = geocode_city(
+                            city_input.strip()
+                        )
 
                     if geo:
-                        st.session_state.lat = round(geo.latitude, 4)
-                        st.session_state.lon = round(geo.longitude, 4)
-                        st.session_state.city = city_input
-                        st.session_state.address = geo.address
+
+                        st.session_state.lat = round(
+                            geo["lat"], 4
+                        )
+
+                        st.session_state.lon = round(
+                            geo["lon"], 4
+                        )
+
+                        st.session_state.city = city_input.strip()
+
+                        st.session_state.address = geo["address"]
+
                         st.success("Location updated")
+
                         st.rerun()
+
                     else:
                         st.warning("City not found.")
+
                 except Exception as e:
-                    st.error(f"Geocoding error: {e}")
+
+                    st.error(
+                        "Unable to retrieve the location right now. "
+                        "Please try again or enter coordinates manually."
+                    )
+
             else:
                 st.warning("Enter a city name.")
 
@@ -249,6 +320,8 @@ with st.sidebar:
         width=None,
     )
     # ── Detect map click ──
+    # ── Detect map click ──
+    # ── Detect map click ──
     if map_data and map_data.get("last_clicked"):
 
         clicked_lat = map_data["last_clicked"]["lat"]
@@ -258,17 +331,27 @@ with st.sidebar:
         st.session_state.lon = round(clicked_lon, 4)
 
         try:
-            geolocator = Nominatim(user_agent="dtr_dashboard_click")
-            location = geolocator.reverse(
-                f"{clicked_lat}, {clicked_lon}",
-                timeout=10
+
+            address = reverse_geocode(
+                round(clicked_lat, 4),
+                round(clicked_lon, 4)
             )
 
-            if location:
-                st.session_state.address = location.address
+            if address:
 
-        except:
-            st.session_state.address = "Location identified by coordinates"
+                st.session_state.address = address
+
+            else:
+
+                st.session_state.address = (
+                    "Location identified by coordinates"
+                )
+
+        except Exception:
+
+            st.session_state.address = (
+                "Location identified by coordinates"
+            )
 
         st.success("📍 Location selected from map")
         st.rerun()
@@ -293,17 +376,6 @@ with st.sidebar:
             format="%.4f",
             key="lon"
         )
-    # ── Reverse Geocoding Display ──
-    try:
-        geolocator = Nominatim(user_agent="dtr_dashboard_reverse")
-        location = geolocator.reverse(
-            f"{st.session_state.lat}, {st.session_state.lon}",
-            timeout=10
-        )
-        if location:
-            st.session_state.address = location.address
-    except:
-        pass
 
     st.success(f"📌 Current Location: {st.session_state.address}")
     st.caption(f"Coordinates: {st.session_state.lat}, {st.session_state.lon}")
